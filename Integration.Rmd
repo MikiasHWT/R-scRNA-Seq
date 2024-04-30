@@ -1,0 +1,211 @@
+---
+title: "Integration"
+author: "Mikias HW"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Prep Workspace
+## Load libraries
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(SeuratData)
+library(patchwork)
+library(conflicted)  # Resolve function name conflicts
+library(tidyverse)  # Data manipulation and visualization
+library(cowplot)
+theme_set(theme_cowplot())
+```
+
+## Conflicted functions
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set function preferences
+conflicts_prefer(dplyr::select)
+
+conflicts_prefer(dplyr::filter)
+```
+
+## Define Directories
+```{r}
+# Define data directory
+dataDir <- paste(getwd(), "data", sep = "/")
+
+list.files(dataDir)
+
+# Define output directory
+outDir <- paste(getwd(), "output", "integration", sep = "/")
+
+# install dataset
+# options(timeout = max(1000, getOption("timeout")))
+# InstallData("ifnb")
+```
+# Load & Split Data
+```{r}
+# load dataset
+ifnb <- LoadData("ifnb")
+ifnb
+
+# split the RNA measurements into two layers one for control cells, one for stimulated cells
+ifnb[["RNA"]] <- split(ifnb[["RNA"]], f = ifnb$stim)
+ifnb
+```
+
+# Quick Workflow
+```{r}
+
+ifnb <- ifnb |> 
+  NormalizeData(verbose = FALSE) |> 
+  FindVariableFeatures(verbose = FALSE) |> 
+  ScaleData(verbose = FALSE) |> 
+  RunPCA(verbose = FALSE) |> 
+  FindNeighbors(dims = 1:30, reduction = "pca", verbose = FALSE) |> 
+  FindClusters(resolution = 2, cluster.name = "unintegrated_clusters", verbose = FALSE) |> 
+  RunUMAP(dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated", verbose = FALSE)
+
+
+```
+
+<!-- # Better Workflow -->
+<!-- ```{r} -->
+<!-- ifnb2 <- LoadData("ifnb") -->
+
+<!-- ifnb2[["RNA"]] <- split(ifnb2[["RNA"]], f = ifnb2$stim) -->
+
+<!-- # Better Workflow  -->
+<!-- ifnbSC <- ifnb2 |> -->
+<!--   SCTransform(verbose = FALSE) |> -->
+<!--   RunPCA(verbose = FALSE) |> -->
+<!--   RunUMAP(dims = 1:30, reduction.name = "umap.unintegrated", verbose = FALSE) -->
+
+<!-- DimPlot(ifnbSC, reduction = "umap.unintegrated", group.by = c("stim", "seurat_annotations")) -->
+<!-- ifnbSC -->
+
+<!-- # integrate datasets -->
+<!-- ifnbSC <- IntegrateLayers(object = ifnbSC, method = CCAIntegration, normalization.method = "SCT", verbose = F) -->
+
+<!-- ifnbSC <- ifnbSC |>  -->
+<!--   FindNeighbors(reduction = "integrated.dr", dims = 1:30) |>  -->
+<!--   FindClusters(resolution = 0.6) |>  -->
+<!--   RunUMAP(dims = 1:30, reduction = "integrated.dr") -->
+
+<!-- DimPlot(ifnbSC, reduction = "umap", group.by = c("stim", "seurat_annotations")) -->
+
+<!-- # perform differential expression -->
+<!-- ifnbSC <- PrepSCTFindMarkers(ifnbSC) -->
+<!-- ifnbSC$celltype.stim <- paste(ifnbSC$seurat_annotations, ifnbSC$stim, sep = "_") -->
+<!-- Idents(ifnbSC) <- "celltype.stim" -->
+<!-- b.interferon.response <- FindMarkers(ifnbSC, ident.1 = "B_STIM", ident.2 = "B_CTRL", verbose = FALSE) -->
+<!-- ``` -->
+
+# View Clusters
+```{r fig.width=18, fig.height=10}
+DimPlot(ifnb, reduction = "umap.unintegrated", group.by = c("stim", "seurat_clusters"))
+```
+
+# Integrate
+```{r}
+ifnb
+
+ifnb <- IntegrateLayers(object = ifnb, method = CCAIntegration, orig.reduction = "pca", new.reduction = "integrated.cca",
+    verbose = FALSE)
+
+ifnb
+
+# re-join layers after integration
+ifnb[["RNA"]] <- JoinLayers(ifnb[["RNA"]])
+
+ifnb
+
+
+ifnb <- ifnb |> 
+  FindNeighbors(reduction = "integrated.cca", dims = 1:30) |> 
+  FindClusters(resolution = 1) |> 
+  RunUMAP(dims = 1:30, reduction = "integrated.cca")
+
+```
+
+# View Integration
+```{r fig.width=18, fig.height=10}
+DimPlot(ifnb, reduction = "umap", group.by = c("stim", "seurat_annotations"))
+
+DimPlot(ifnb, reduction = "umap", split.by = "stim")
+```
+
+# Identify conserved markers
+```{r}
+Idents(ifnb) <- "seurat_annotations"
+nk.markers <- FindConservedMarkers(ifnb, ident.1 = "NK", grouping.var = "stim", verbose = FALSE)
+head(nk.markers)
+```
+
+# Dotplot
+```{r fig.width=14, fig.height=16}
+# NEEDS TO BE FIXED AND SET ORDER CORRECTLY
+Idents(ifnb) <- factor(Idents(ifnb), levels = c("pDC", 
+                                                "Eryth", 
+                                                "Mk", 
+                                                "DC", 
+                                                "CD14 Mono", 
+                                                "CD16 Mono",
+                                                "B Activated", 
+                                                "B", 
+                                                "CD8 T", 
+                                                "NK", 
+                                                "T activated", 
+                                                "CD4 Naive T", 
+                                                "CD4 Memory T"))
+
+
+markers.to.plot <- c("CD3D", "CREM", "HSPH1", "SELL", "GIMAP5", "CACYBP", "GNLY", "NKG7", "CCL5",
+    "CD8A", "MS4A1", "CD79A", "MIR155HG", "NME1", "FCGR3A", "VMO1", "CCL2", "S100A9", "HLA-DQA1",
+    "GPR183", "PPBP", "GNG11", "HBA2", "HBB", "TSPAN13", "IL3RA", "IGJ", "PRSS57")
+
+DotPlot(ifnb, features = markers.to.plot, cols = c("blue", "red"), dot.scale = 8, split.by = "stim") +
+    RotatedAxis() + theme(panel.grid.major.y = element_line(color = "gray", linetype = "dashed"),
+                          panel.grid.major.x = element_line(color = "gray", linetype = "dashed"))
+```
+
+# Pseudobulk DEG Analysis
+```{r}
+# Aggregate cells of a similar type and condition together to create “pseudobulk” profiles
+aggregate_ifnb <- AggregateExpression(ifnb, group.by = c("seurat_annotations", "stim"), return.seurat = TRUE)
+genes.to.label = c("ISG15", "LY6E", "IFI6", "ISG20", "MX1", "IFIT2", "IFIT1", "CXCL10", "CCL8")
+
+# Plot gene expression comparisons
+p1 <- CellScatter(aggregate_ifnb, "CD14 Mono_CTRL", "CD14 Mono_STIM", highlight = genes.to.label)
+p2 <- LabelPoints(plot = p1, points = genes.to.label, repel = TRUE)
+
+p3 <- CellScatter(aggregate_ifnb, "CD4 Naive T_CTRL", "CD4 Naive T_STIM", highlight = genes.to.label)
+p4 <- LabelPoints(plot = p3, points = genes.to.label, repel = TRUE)
+
+p2 + p4
+
+# create a column in the meta.data slot to hold both the cell type and stimulation information 
+ifnb$celltype.stim <- paste(ifnb$seurat_annotations, ifnb$stim, sep = "_")
+
+# switch the current ident
+Idents(ifnb) <- "celltype.stim"
+
+# find the genes that are different between stimulated and control B cells.
+b.interferon.response <- FindMarkers(ifnb, ident.1 = "B_STIM", ident.2 = "B_CTRL", verbose = FALSE)
+
+head(b.interferon.response, n = 15)
+```
+
+# Visualize
+```{r fig.width=16, fig.height=12}
+# Feature Plot
+FeaturePlot(ifnb, features = c("CD3D", "GNLY", "IFI6"), 
+            split.by = "stim", max.cutoff = 3, 
+            cols = c("grey","red"), reduction = "umap")
+
+# Violin Plot
+plots <- VlnPlot(ifnb, features = c("LYZ", "ISG15", "CXCL10"), 
+                 split.by = "stim", group.by = "seurat_annotations",
+                 pt.size = 0, combine = FALSE)
+
+wrap_plots(plots = plots, ncol = 1)
+```
+
+
+

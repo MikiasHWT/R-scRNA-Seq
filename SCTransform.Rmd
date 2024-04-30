@@ -1,0 +1,99 @@
+---
+title: "SCTransform"
+author: "Mikias HW"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# Prep Workspace
+## Load libraries
+```{r message=FALSE, warning=FALSE}
+library(Seurat)  # Single-cell RNA sequencing
+library(sctransform) # 
+library(patchwork)  # Combine plots
+library(conflicted)  # Resolve function name conflicts
+library(tidyverse)  # Data manipulation and visualization
+```
+
+## Conflicted functions
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set function preferences
+conflicts_prefer(dplyr::select)
+
+conflicts_prefer(dplyr::filter)
+```
+
+## Define Directories
+```{r}
+# Define data directory
+dataDir <- paste(getwd(), "data", "filtered_gene_bc_matrices", "hg19", sep = "/")
+
+list.files(dataDir)
+
+# Define output directory
+outDir <- paste(getwd(), "output", "sctransform", sep = "/")
+```
+
+# Load data
+```{r}
+pbmcDat <- Read10X(dataDir)
+
+pbmc <- CreateSeuratObject(pbmcDat)
+```
+
+# SCTransform
+
+- SCTransform() replaces NormalizeData(), ScaleData(), & FindVariableFeatures().
+- Tranformed data is saved as Default in SCT assay slot
+- Can remove sources of variation during normalization, (eg: MT %)
+
+```{r}
+# Save MT %
+pbmc <- PercentageFeatureSet(pbmc, pattern = "^MT-", col.name = "percent.mt")
+
+# run sctransform
+pbmc <- SCTransform(pbmc, vars.to.regress = "percent.mt", verbose = FALSE)
+```
+
+# Dim down
+```{r}
+# QUick standard workflow
+pbmc <- pbmc |> 
+  RunPCA(verbose = FALSE) |> # Store PC's
+  RunUMAP(dims = 1:30, verbose = FALSE) |> # Store UMAP
+  FindNeighbors(dims = 1:30, verbose = FALSE) |> # Store K Neighbores
+  FindClusters(verbose = FALSE) # Store Clusters
+  
+# Plot UMAP
+DimPlot(pbmc, label = TRUE)
+
+```
+
+# Quickest Workflow
+```{r eval=FALSE}
+# pbmc <- CreateSeuratObject(pbmc_data) %>%
+#     PercentageFeatureSet(pattern = "^MT-", col.name = "percent.mt") %>%
+#     SCTransform(vars.to.regress = "percent.mt") %>%
+#     RunPCA() %>%
+#     FindNeighbors(dims = 1:30) %>%
+#     RunUMAP(dims = 1:30) %>%
+#     FindClusters()
+```
+
+# Visualize
+```{r fig.width=16, fig.height=10}
+# Violin plot
+VlnPlot(pbmc, features = c("CD8A", "GZMK", "CCL5", "S100A4", 
+                           "ANXA1", "CCR7", "ISG15", "CD3D"),
+        pt.size = 0.2, ncol = 4)
+
+# Expression UMAP
+FeaturePlot(pbmc, features = c("CD8A", "GZMK", "CCL5", 
+                               "S100A4", "ANXA1", "CCR7"), 
+            pt.size = 0.2, ncol = 3)
+
+FeaturePlot(pbmc, features = c("CD8A", "GZMK", "CCL5", 
+                               "S100A4", "ANXA1", "CCR7"), 
+            pt.size = 0.2,ncol = 3)
+```
+
+

@@ -1,0 +1,300 @@
+---
+title: "MultiModal_Practice"
+author: "Mikias HW"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+# Prep Workspace
+## Load libraries
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)  # Data manipulation and visualization
+
+library(Seurat)  # Single-cell RNA sequencing
+
+library(patchwork)  # Combine plots
+
+library(conflicted)  # Resolve function name conflicts
+
+```
+
+## Conflicted functions
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set function preferences
+conflicts_prefer(dplyr::select)
+
+conflicts_prefer(dplyr::filter)
+```
+
+## Define Directories
+```{r}
+# Define data directory
+dataDir <- paste(getwd(), "data", "GSE100866", sep = "/")
+
+list.files(dataDir)
+
+# Define output directory
+outDir <- paste(getwd(), "output", "multimodal", sep = "/")
+```
+
+# Load Data
+## Load Datasets
+```{r}
+# Single cell RNA data
+cbmc.rna <- as.sparse(read.csv(paste(dataDir, "GSE100866_CBMC_8K_13AB_10X-RNA_umi.csv", sep="/"),
+                                header = TRUE, row.names = 1))
+
+# Antibody-derived tags (ADT) data
+cbmc.adt <- as.sparse(read.csv(paste(dataDir, "GSE100866_CBMC_8K_13AB_10X-ADT_umi.csv", sep="/"), 
+                               header = TRUE, row.names = 1))
+```
+
+## Filter species cells
+```{r}
+# Remove all mouse cells but top 150 expressed genes
+cbmc.rna <- CollapseSpeciesExpressionMatrix(cbmc.rna, 
+                                            prefix = "HUMAN_", 
+                                            controls = "MOUSE_", 
+                                            ncontrols = 150)
+```
+
+## Preview data
+```{r}
+# RNA Samples
+head(colnames(cbmc.rna))
+
+# Genes
+head(row.names(cbmc.rna))
+
+# ADT Samples 
+head(colnames(cbmc.adt))
+
+# Proteins
+row.names(cbmc.adt)
+
+# Confirm matching samples
+all.equal(colnames(cbmc.rna), colnames(cbmc.adt))
+```
+
+## Create Seurat objects
+```{r}
+# scRNA-seq Seurat obj
+cbmc <- CreateSeuratObject(counts = cbmc.rna)
+
+# Include ADT into Seurat obj
+cbmc[["ADT"]] <- CreateAssay5Object(counts = cbmc.adt)
+
+# Confirm presence of both assays
+Assays(cbmc)
+
+# Set default assay (RNA is default)
+DefaultAssay(cbmc) <- "RNA"
+
+```
+
+
+# Quick Processing
+## Pipe to UMAP
+```{r}
+
+
+cbmc <- SCTransform(cbmc, verbose = FALSE)
+
+
+cbmc <- cbmc |> 
+  RunPCA(npcs = 50,
+         seed.use = 42,
+         verbose = FALSE) |> # Extract principle components
+  FindNeighbors(reduction = "pca",
+                dims = 1:30, 
+                k.param = 20,
+                verbose = FALSE) |> # Determine K Neighbors
+  FindClusters(resolution = 0.8, 
+               verbose = FALSE) |> # Identify clusters 
+  RunUMAP(dims = 1:30, 
+          verbose = FALSE) # Save Uniform Manifold Approximation and Projections
+
+
+DimPlot(cbmc, label = TRUE)
+
+```
+
+<!-- # SCTransform -->
+
+<!-- - SCTransform() replaces NormalizeData(), ScaleData(), & FindVariableFeatures(). -->
+<!-- - Tranformed data is saved as Default in SCT assay slot -->
+<!-- - Can remove sources of variation during normalization, (eg: MT %) -->
+
+<!-- ```{r} -->
+<!-- # Save MT % -->
+<!-- pbmc <- PercentageFeatureSet(pbmc, pattern = "^MT-", col.name = "percent.mt") -->
+
+<!-- # run sctransform -->
+<!-- pbmc <- SCTransform(pbmc, vars.to.regress = "percent.mt", verbose = FALSE) -->
+<!-- ``` -->
+
+<!-- # Quick Processing -->
+<!-- ## Pipe to UMAP -->
+<!-- ```{r} -->
+<!-- cbmc <- NormalizeData(cbmc,  -->
+<!--                       normalization.method = "LogNormalize",  -->
+<!--                       scale.factor = 10000, -->
+<!--                       verbose = FALSE) |> # Normalize counts -->
+<!--   FindVariableFeatures(selection.method = "vst", -->
+<!--                        verbose = FALSE) |> # Identify outlier features -->
+<!--   ScaleData(model.use = "linear", -->
+<!--             verbose = FALSE) |> # Scale and center data -->
+<!--   RunPCA(npcs = 50, -->
+<!--          seed.use = 42, -->
+<!--          verbose = FALSE) |> # Extract principle components -->
+<!--   FindNeighbors(reduction = "pca", -->
+<!--                 dims = 1:30,  -->
+<!--                 k.param = 20, -->
+<!--                 verbose = FALSE) |> # Determine K Neighbors -->
+<!--   FindClusters(resolution = 0.8,  -->
+<!--                verbose = FALSE) |> # Identify clusters  -->
+<!--   RunUMAP(dims = 1:30,  -->
+<!--           verbose = FALSE) # Save Uniform Manifold Approximation and Projections -->
+
+
+<!-- DimPlot(cbmc, label = TRUE) -->
+
+<!-- ``` -->
+
+# Visualize
+## Feature plot comparisons
+```{r fig.width=10, fig.height=18}
+# Normalize ADT data,
+cbmc <- NormalizeData(cbmc, normalization.method = "CLR", margin = 2, assay = "ADT")
+
+
+# Extract feature plots with assay specific tags 
+Key(cbmc[["ADT"]])
+
+Proteins <- FeaturePlot(cbmc, features = c("adt_CD3", "adt_CD4", "adt_CD8", "adt_CD19", "adt_CD11c"), 
+                        cols = c("lightgrey", "red"), ncol=1) 
+
+# No need to tags for default assay
+RNA <- FeaturePlot(cbmc, features = c("CD3E", "CD4", "CD8A", "CD19", "ITGAX"), 
+                        cols = c("lightgrey", "blue"), ncol=1)
+
+# plot Protein and RNA side by side
+(Proteins | RNA) + plot_annotation(title = "Protein vs RNA plots",
+                                   subtitle = "Left=Protein | Right=RNA",
+                              theme = theme(plot.title = element_text(hjust=0.5, size=20), 
+                                            plot.subtitle = element_text(hjust=0.5)))
+```
+
+### Remaining Proteins
+```{r}
+# Remainin proteins
+FeaturePlot(cbmc, features = c("adt_CD45RA", "adt_CD56", "adt_CD16", "adt_CD10", 
+                                            "adt_CD14", "adt_CD34", "adt_CCR5", "adt_CCR7"), 
+                        cols = c("lightgrey", "red")) 
+
+
+FeaturePlot(cbmc, features = c("PTPRC", "NCAM1", "FCGR3A", "MME", "CD14", "CD34", "CCR5", "CCR7"), 
+                        cols = c("lightgrey", "blue"))
+
+
+# CD45RA (PTPRC) - Naive T Cells
+# CD56 (NCAM1) - NK Marker
+# CD16 (FCGR3A) - NK, Mono, Neutro, Macro
+# CD10 (MME) - Pre Bcells
+# CD14 (CD14) - Monos and Macros
+# CD34 (CD34) - Stem
+# CCR5 (CCR5) - Macro & T
+# CCR7 (CCR7) _ T & B
+
+```
+
+## Scatter plot comparisons
+```{r fig.width=14}
+# View RNA and/or protein markers on XY plot
+p1 <- FeatureScatter(cbmc, feature1 = "adt_CD19", feature2 = "adt_CD3")
+
+p2 <- FeatureScatter(cbmc, feature1 = "CD19", feature2 = "CD3E", pt.size = 2)
+
+p1 | p2
+
+# View central dogma in action
+FeatureScatter(cbmc, feature1 = "adt_CD3", feature2 = "CD3E", pt.size = 2)
+
+# Flow Cytometry Be Gone!!!
+FeatureScatter(cbmc, feature1 = "adt_CD4", feature2 = "adt_CD8")
+```
+
+## Violin Plot
+```{r}
+# view cluster expression by violin plots
+r19 <- VlnPlot(cbmc, "adt_CD19")
+
+p19 <- VlnPlot(cbmc, "CD19")
+
+r19 | p19
+```
+
+# Differential expresion
+## Find markers
+```{r fig.width=12}
+# Extract top differentially expressed markers
+adt.markers <- FindAllMarkers(cbmc, only.pos = TRUE, 
+                               verbose = FALSE, 
+                               assay = "ADT")
+
+# RNA too
+rna.markers <- FindAllMarkers(cbmc, only.pos = TRUE, 
+                               verbose = FALSE, 
+                               assay = "RNA")
+
+# Filter to top 10 by smallest padj value
+top10ADT <- adt.markers |> 
+  group_by(cluster) |> 
+  arrange(p_val_adj)|> 
+  slice_head(n = 10) |> 
+  ungroup()
+
+top10RNA <- rna.markers |> 
+  group_by(cluster) |> 
+  arrange(p_val_adj)|> 
+  slice_head(n = 10) |> 
+  ungroup()
+```
+
+# Guess the Cells
+## Label Clusters
+```{r fig.height=10, fig.width=16}
+# Save label names as characters
+clusterIDs <- c("0 = Innate", 
+                "1 = ~CD4 T",
+                "2 = ~CD4 T", 
+                "3 = NK",
+                "4 = Innate",
+                "5 = ",
+                "6 = B Cells", 
+                "7 = CD8 T Cells", 
+                "8 = Innate",
+                "9 = Innate", 
+                "10 = Innate", 
+                "11 = T-ish", 
+                "12 = Stem",
+                "13 = ", 
+                "14 = ", 
+                "15 = ", 
+                "16 = Innate", 
+                "17 = ", 
+                "18 = ", 
+                "19 = T-ish")
+
+# Assign cluster levels to names of ClusterID DF
+names(clusterIDs) <- levels(cbmc)
+
+# Rename Clusters
+cbmc <- RenameIdents(cbmc, clusterIDs)
+
+# Plot UMAP with labels
+DimPlot(cbmc, reduction = "umap", label = TRUE, pt.size = 2, 
+        label.size = 6, label.box = TRUE, repel = TRUE) + NoLegend()
+```

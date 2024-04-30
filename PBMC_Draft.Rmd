@@ -1,0 +1,424 @@
+---
+title: "Seurat_PBMC_Draft"
+author: "Mikias HW"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+### Load libraries
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)  # Data manipulation and visualization
+
+library(Seurat)  # Single-cell RNA sequencing
+
+library(patchwork)  # Combine plots
+
+library(conflicted)  # Resolve function name conflicts
+
+library(presto) # DE analysis for large datasets
+```
+
+### Conflicted functions
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set function preferences
+conflicts_prefer(dplyr::select)
+
+conflicts_prefer(dplyr::filter)
+
+```
+
+# Prep
+## Suerat Object
+```{r}
+# Define data directory
+dataDir <- paste(getwd(), "data", "filtered_gene_bc_matrices", "hg19", sep = "/")
+
+list.files(dataDir)
+
+# Load dataset
+pbmc.data <- Read10X(dataDir)
+
+# Initialize Seurat object 
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = "pbmc3k", min.cells = 3, min.features = 200)
+pbmc
+
+```
+
+## Data information
+```{r}
+# sumber of genes (rows) by samples (columns)
+dim(pbmc)
+
+# Sample names
+head(rownames(pbmc))
+
+# Gene barcodes
+head(colnames(pbmc))
+```
+
+# Quality Control
+
+Common QC metrics include:
+
+- The number of unique genes detected in each cell.
+        - Very low gene counts = Low-quality cells or empty droplets
+        - Very high gene counts = Doublets or multiplets 
+
+- Total number of RNA molecules per cell 
+
+- The percentage of mitochondrial genome reads
+        - High precentage = Low-quality / dying cells 
+  
+## MT Genes
+```{r}
+# View number of unique genes and total molecules from metadata slot
+head(pbmc@meta.data, 5)
+
+# Calculate mitochondrial QC metrics and save in Seurat object
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+
+# View new QC metric
+head(pbmc@meta.data, 5)
+
+```
+
+## Visualize QC
+### violin plot
+```{r fig.width=16, fig.height=10}
+# Vizualize QC metrics and cutoffs
+CountPlot <- ggplot(pbmc@meta.data, aes("", nCount_RNA)) +
+  geom_violin(fill = "pink") +
+  geom_jitter(alpha = 0.2) +
+  geom_hline(yintercept = c(200, 7000), color = c("red")) +
+  labs(title = "Molecule Counts")
+
+MTPlot <- ggplot(pbmc@meta.data, aes("", percent.mt)) +
+  geom_violin(fill = "pink") +
+  geom_jitter(alpha = 0.2) +
+  geom_hline(yintercept = c(0.5, 5), color = c("red", "red")) +
+  labs(title = "Percent Mitochondria")
+
+FeaturePlot <- ggplot(pbmc@meta.data, aes("", nFeature_RNA)) +
+  geom_violin(fill = "pink") + 
+  geom_jitter(alpha = 0.2) +
+  geom_hline(yintercept = c(300, 1700), color = c("red", "red")) +
+  labs(title = "Unique Genes")
+
+# Arrange plts
+CountPlot + MTPlot + FeaturePlot + plot_layout(ncol = 3)
+```
+
+### Scatterplot
+```{r fig.width=14, fig.height=8}
+CountMT <- ggplot(pbmc@meta.data, aes(nCount_RNA, percent.mt)) +
+  geom_point() +
+  geom_hline(yintercept = c(0.5, 5), color = c("red", "red")) +
+  geom_vline(xintercept = c(200, 7000), color = c("red", "red"))
+
+CountFeature <- ggplot(pbmc@meta.data, aes(nCount_RNA, nFeature_RNA)) +
+  geom_point() + 
+  geom_hline(yintercept = c(300, 1700), color = c("red", "red")) +
+  geom_vline(xintercept = c(200, 7000), color = c("red", "red"))
+
+CountMT + CountFeature + plot_layout(ncol = 2)
+```
+
+## Apply QC
+
+Keep cells with: 
+
+- 300 - 1700 unique genes 
+
+- 200 - 7000 total RNA molecules 
+
+- 0.5 - 5% mitochondrial gene percentage
+```{r}
+pbmc <- subset(pbmc, subset = nFeature_RNA > 300 & nFeature_RNA < 1700 & 
+                 nCount_RNA > 200 & nCount_RNA < 7000 &
+                 percent.mt > 0.5 & percent.mt < 5)
+```
+
+### View post QC
+```{r fig.width=16, fig.height=10}
+# Violin plots
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, alpha = 0.2)
+
+# Scatter plots
+FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt",  pt.size = 2) + FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA", pt.size = 2) + plot_layout(ncol = 2)
+```
+
+<!-- # Normalize & Transform data -->
+<!-- ## Normalize -->
+<!-- Normalizes feature expression by total expression with “LogNormalize” method, multiply by a scaling factor (10,000 by default) -->
+
+<!-- Normalized values are stored in pbmc[["RNA"]]$data. -->
+<!-- ```{r} -->
+<!-- pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000) -->
+<!-- ``` -->
+
+<!-- # Feature Selection -->
+<!-- ## Stabalize variance -->
+<!-- ```{r} -->
+<!-- # Return 2,000 features per dataset -->
+<!-- pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000) -->
+<!-- ``` -->
+
+<!-- ## Plot mean by variance -->
+<!-- ```{r fig.width=12, fig.height=8} -->
+<!-- # top 20 most variable genes -->
+<!-- top20 <- head(VariableFeatures(pbmc), 20) -->
+
+<!-- # plot with labels -->
+<!-- plot1 <- VariableFeaturePlot(pbmc) -->
+
+<!-- LabelPoints(plot1, top20,  -->
+<!--             repel = TRUE,  -->
+<!--             xnudge = 0, -->
+<!--             ynudge = 0) -->
+<!-- ``` -->
+
+<!-- ## Scale data -->
+<!-- Before dimensionality reduction methods such as UMAP and PCA plots, use ScaleData() function to prevent domination by highly-expressed genes.\ -->
+<!-- - Scale expression of each gene, so the variance is 1 \ -->
+<!-- - Shift expression of each gene, so the mean is 0 \ -->
+
+<!-- Results are stored in pbmc[["RNA"]]$scale.data -->
+
+<!-- ```{r} -->
+<!-- all.genes <- rownames(pbmc) -->
+
+<!-- pbmc <- ScaleData(pbmc, features = all.genes) -->
+<!-- ``` -->
+
+
+# SCTransform
+
+- SCTransform() replaces NormalizeData(), ScaleData(), & FindVariableFeatures().
+- Tranformed data is saved as Default in SCT assay slot
+- Can remove sources of variation during normalization, (eg: MT %)
+
+```{r}
+# Save MT %
+pbmc <- PercentageFeatureSet(pbmc, pattern = "^MT-", col.name = "percent.mt")
+
+# run sctransform
+pbmc <- SCTransform(pbmc, vars.to.regress = "percent.mt", verbose = FALSE)
+```
+
+
+# Dimensionailty reduction
+## Principle Components
+```{r  message=FALSE}
+# Extract principle components & save into Seurat object
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+
+# Save TSNE
+pbmc <- RunTSNE(pbmc, features = VariableFeatures(object = pbmc))
+
+# Save UMAP
+pbmc <- RunUMAP(pbmc, features = VariableFeatures(object = pbmc))
+```
+
+### Explore PC's
+VizDimReduction(), DimPlot(), and DimHeatmap()
+```{r fig.width=14, fig.height=6}
+# print top 3 PC's most significant genes
+print(pbmc[["pca"]], dims = 1:3, nfeatures = 5)
+
+# Plot top 3 PC's most significant genes 
+VizDimLoadings(pbmc, dims = 1:3, nfeatures = 10, reduction = "pca", balanced = TRUE, ncol = 3)
+```
+
+## Dim Down Plots
+```{r}
+# Dimplot() will function for all these pots
+# PCA plot 
+PCAPlot(pbmc, reduction = "pca") + NoLegend() + labs(title="PCA")
+
+# TSNE plot
+TSNEPlot(pbmc, reduction = "tsne") + NoLegend() + labs(title="tSNE")
+
+# UMAP
+UMAPPlot(pbmc, reduction = "umap") + NoLegend() + labs(title="UMAP")
+```
+
+## Heatmaps
+```{r, fig.width=16, fig.height=10}
+DimHeatmap(pbmc, dims = c(1:4),  
+           nfeatures = 10, cells = 500, ncol = 2,
+           balanced = TRUE, reduction = "pca")
+```
+
+# Determine Clusters
+## Elbowplot
+This plot shows the variation (y) that can be described by a given number of PC's (x). As the variation stabalizes, we can determine the number of principle components that acuratly describe most of the variation within a dataset. In this case i would choose 8-10 depending on my intentions for the analysis. 
+```{r}
+ElbowPlot(pbmc) + 
+  geom_vline(xintercept = c(8, 9, 10), color = c("red", "blue", "green")) + 
+  labs(title = "Elbow Plot")
+```
+
+## Distance metric
+Using the FindNeighbors() function: \
+- construct a KNN graph based on euclidean distances in PCA space \
+- refine the edge weights between any two cells based on the shared overlap in their local neighborhoods (Jaccard similarity)
+```{r}
+pbmc <- FindNeighbors(pbmc, dims = 1:9)
+```
+
+## Cluster Cells
+Using FindClusters() function:\
+- Calculate k-nearest neighbors and construct the SNN graph. \
+- Optimize the modularity function to determine clusters\
+
+A resolution parameter between 0.4-1.2 is ideal for ~3K single-cell data. \
+Optimal resolution increases with dataset. 
+```{r}
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+
+# View cluster assignments
+head(Idents(pbmc), 5)
+```
+
+## Clustered Dimed Down
+```{r message=FALSE}
+# Extract principle components & save into Seurat object
+pbmc <- RunPCA(pbmc, dims = 1:9)
+
+# PCA plot
+PCAPlot(pbmc, reduction = "pca") + labs(title="Clustered PCA")
+
+# Save TSNE
+pbmc <- RunTSNE(pbmc, dims = 1:9)
+
+# TSNE plot
+TSNEPlot(pbmc, reduction = "tsne") + labs(title="Clustered tSNE")
+
+# Run UMAP calculations with newly clustered cells
+pbmc <- RunUMAP(pbmc, dims = 1:9)
+
+# Plot UMAP
+UMAPPlot(pbmc, reduction = "umap") + labs(title="Clustered UMAP")
+```
+
+# Differential Gene Expression
+## Identify cluster features
+```{r}
+# find all markers of cluster 2
+cluster2.markers <- FindMarkers(pbmc, ident.1 = 2)
+
+head(cluster2.markers, n = 5)
+
+# find all markers distinguishing cluster 5 from clusters 0 and 3
+cluster5.markers <- FindMarkers(pbmc, ident.1 = 5, ident.2 = c(0, 3))
+
+head(cluster5.markers, n = 5)
+
+# find markers all cluster compared to all remaining cells, report only the positive ones
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE)
+
+pbmc.markers |> 
+  group_by(cluster) |> 
+  filter(avg_log2FC > 1)
+
+# ROC test returns ‘classification power’ individual markers (0=random, to 1=perfect).
+cluster0.markers <- FindMarkers(pbmc, ident.1 = 0, logfc.threshold = 0.25, 
+                                test.use = "roc", only.pos = TRUE)
+
+head(cluster0.markers)
+```
+
+## View results
+```{r fig.width=16}
+# Violin Plot
+VlnPlot(pbmc, features = c("CD3E", "CD8A", "CCR7"))
+
+# Plot raw counts as well
+VlnPlot(pbmc, features = c("CD3E", "CD8A", "CCR7"), slot = "counts", log = TRUE)
+
+# Single marker UMAPS
+FeaturePlot(pbmc, features = c("MS4A1", "GNLY", "CD3E", "CD14", "FCER1A", "FCGR3A", "LYZ", "PPBP",
+    "CD8A"))
+
+
+```
+
+## Heatmap
+```{r fig.height=16, fig.width=10}
+top10 <- pbmc.markers |> 
+  group_by(cluster) |> 
+  filter(avg_log2FC > 1) |> 
+  slice_head(n = 10) |> 
+  ungroup()
+
+DoHeatmap(pbmc, features = top10$gene) + NoLegend()
+```
+
+## Widefield View
+```{r fig.height=20, fig.width=16, warning=FALSE, message=FALSE}
+# Extract top 3 cluster identifying markers
+ClusID <- top10 |> 
+  select(cluster, gene) |>
+  group_by(cluster) |> 
+  slice_head(n=3) |> 
+  ungroup()
+
+# UMAP visualization 
+FeaturePlot(pbmc, features = ClusID$gene, ncol = 3)
+
+# Violin plots
+VlnPlot(pbmc, features = ClusID$gene, ncol = 3)
+
+# Ridgeplots
+RidgePlot(pbmc, features = ClusID$gene, ncol = 3)
+
+# Dotplot
+DotPlot(pbmc, features =  ClusID$gene)
+```
+
+## Interactive exploration
+```{r}
+# # Plot something 
+# plot <- FeaturePlot(pbmc, features = "CD8A")
+# 
+# # Run interactive plot
+# HoverLocator(plot = plot, information = FetchData(pbmc, vars = c("ident", "PC_1", "nFeature_RNA")))
+```
+
+## Label Clusters
+```{r fig.height=10, fig.width=16}
+# Save label names as characters
+clusterIDs <- c("0 = Naive CD4 T", "1 = CD4 Mem?", 
+                     "2 = Mono?", "3 = B", 
+                     "4 = NK?", "5 = ?", 
+                     "6 = ?", "7 = DC?", "8 = ")
+
+# Assign cluster levels to names of ClusterID DF
+names(clusterIDs) <- levels(pbmc)
+
+# Rename Clusters
+pbmc <- RenameIdents(pbmc, clusterIDs)
+
+# Plot UMAP with labels
+DimPlot(pbmc, reduction = "umap", label = TRUE, pt.size = 2, 
+        label.size = 6, label.box = TRUE) + NoLegend()
+```
+
+# Save Seurat Object
+```{r}
+# saveRDS(pbmc, file = paste(getwd(), "output/pbmc.rds", sep = "/"))
+```
+
+# Session Information
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
