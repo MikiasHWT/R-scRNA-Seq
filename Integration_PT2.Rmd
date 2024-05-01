@@ -1,0 +1,46 @@
+---
+title: "Integration PT2"
+author: "Mikias HW"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# Prep Workspace
+## Load libraries
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(SeuratData)
+library(SeuratWrappers)
+library(Azimuth)
+library(ggplot2)
+library(patchwork)
+options(future.globals.maxSize = 1e9)
+
+library(conflicted)  # Resolve function name conflicts
+library(tidyverse)  # Data manipulation and visualization
+library(cowplot)
+theme_set(theme_cowplot())
+```
+
+## Conflicted functions
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set function preferences
+conflicts_prefer(dplyr::select)
+
+conflicts_prefer(dplyr::filter)
+```
+
+## Define Directories
+```{r}
+# Define data directory
+dataDir <- paste(getwd(), "data", sep = "/")
+
+list.files(dataDir)
+
+# Define output directory
+outDir <- paste(getwd(), "output", "integration", sep = "/")
+```
+
+```{r}
+
+```
+

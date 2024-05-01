@@ -1,0 +1,161 @@
+---
+title: "Annotating"
+author: "Mikias HW"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# Prep Workspace
+## Load libraries
+```{r message=FALSE, warning=FALSE}
+library(Seurat)
+library(SeuratData)
+library(patchwork)
+library(conflicted)  # Resolve function name conflicts
+library(tidyverse)  # Data manipulation and visualization
+library(cowplot)
+theme_set(theme_cowplot())
+```
+
+## Conflicted functions
+```{r results='hide', message=FALSE, warning=FALSE}
+# Set function preferences
+conflicts_prefer(dplyr::select)
+
+conflicts_prefer(dplyr::filter)
+```
+
+## Define Directories
+```{r}
+# Define data directory
+dataDir <- paste(getwd(), "data", sep = "/")
+
+list.files(dataDir)
+
+# Define output directory
+outDir <- paste(getwd(), "output", "annotating", sep = "/")
+```
+
+# Load Data
+```{r}
+panc8 <- LoadData("panc8")
+table(panc8$tech)
+```
+
+# Quick Processing
+```{r}
+# we will use data from 2 technologies for the reference
+pancreas.ref <- subset(panc8, tech %in% c("celseq2", "smartseq2"))
+pancreas.ref[["RNA"]] <- split(pancreas.ref[["RNA"]], f = pancreas.ref$tech)
+
+# pre-process dataset (without integration)
+pancreas.ref <- pancreas.ref |> 
+  NormalizeData() |> 
+  FindVariableFeatures() |> 
+  ScaleData() |> 
+  RunPCA() |> 
+  FindNeighbors(dims = 1:30) |> 
+  FindClusters() |> 
+  RunUMAP(dims = 1:30)
+```
+
+# View
+```{r}
+DimPlot(pancreas.ref, group.by = c("celltytpe", "tech"))
+```
+
+# Integrate
+```{r}
+pancreas.ref <- IntegrateLayers(object = pancreas.ref, 
+                                method = CCAIntegration, 
+                                orig.reduction = "pca",
+                                new.reduction = "integrated.cca", 
+                                verbose = FALSE)
+
+pancreas.ref <- pancreas.ref |> 
+  FindNeighbors(reduction = "integrated.cca", dims = 1:30) |> 
+  FindClusters() |> 
+  RunUMAP(reduction = "integrated.cca", dims = 1:30)
+
+```
+
+# View
+```{r}
+DimPlot(pancreas.ref, group.by = c("tech", "celltype"))
+```
+
+# Classificaiton with integrated data
+```{r}
+# select two technologies for the query datasets
+pancreas.query <- subset(panc8, tech %in% c("fluidigmc1", "celseq"))
+
+pancreas.query <- NormalizeData(pancreas.query)
+
+pancreas.anchors <- FindTransferAnchors(reference = pancreas.ref, 
+                                        query = pancreas.query, dims = 1:30,
+                                        reference.reduction = "pca")
+
+predictions <- TransferData(anchorset = pancreas.anchors, 
+                            refdata = pancreas.ref$celltype, dims = 1:30)
+
+pancreas.query <- AddMetaData(pancreas.query, metadata = predictions)
+```
+
+# Verify matching
+```{r}
+pancreas.query$prediction.match <- pancreas.query$predicted.id == pancreas.query$celltype
+
+table(pancreas.query$prediction.match)
+
+table(pancreas.query$predicted.id)
+```
+
+# View
+```{r}
+VlnPlot(pancreas.query, c("REG1A", "PPY", "SST", "GHRL", "VWF", "SOX10"), group.by = "predicted.id")
+```
+
+# Unimodal UMAP Projection
+```{r}
+pancreas.ref <- RunUMAP(pancreas.ref, dims = 1:30, reduction = "integrated.cca", return.model = TRUE)
+
+pancreas.query <- MapQuery(anchorset = pancreas.anchors, 
+                           reference = pancreas.ref, 
+                           query = pancreas.query,
+                           refdata = list(celltype = "celltype"), 
+                           reference.reduction = "pca", 
+                           reduction.model = "umap")
+```
+MapQuery() is a wrapper around three functions: TransferData(), IntegrateEmbeddings(), and ProjectUMAP(). TransferData() is used to transfer cell type labels and impute the ADT values; IntegrateEmbeddings() is used to integrate reference with query by correcting the query’s projected low-dimensional embeddings; and finally ProjectUMAP() is used to project the query data onto the UMAP structure of the reference. The equivalent code for doing this with the intermediate functions is below:
+```{r}
+pancreas.query <- TransferData(anchorset = pancreas.anchors, 
+                               reference = pancreas.ref, 
+                               query = pancreas.query,
+                               refdata = list(celltype = "celltype"))
+
+pancreas.query <- IntegrateEmbeddings(anchorset = pancreas.anchors, 
+                                      reference = pancreas.ref, 
+                                      query = pancreas.query,
+                                      new.reduction.name = "ref.pca")
+
+pancreas.query <- ProjectUMAP(query = pancreas.query, 
+                              query.reduction = "ref.pca", 
+                              reference = pancreas.ref,
+                              reference.reduction = "pca", 
+                              reduction.model = "umap")
+```
+
+# View both datasets
+```{r}
+p1 <- DimPlot(pancreas.ref, reduction = "umap", group.by = "celltype", label = TRUE, label.size = 3,
+    repel = TRUE) + NoLegend() + ggtitle("Reference annotations")
+
+p2 <- DimPlot(pancreas.query, reduction = "ref.umap", group.by = "predicted.celltype", label = TRUE,
+    label.size = 3, repel = TRUE) + NoLegend() + ggtitle("Query transferred labels")
+
+p1 + p2
+```
+
+```{r}
+sessionInfo()
+```
+

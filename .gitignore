@@ -7,3 +7,5 @@
 *.tsv
 *.csv
 *.rds 
+*.gz
+*.tar
